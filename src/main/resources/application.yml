@@ -1,0 +1,12 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: lru-cache-service
+
+cache:
+  capacity: 100
+  default-ttl-ms: 60000
+  ttl-check-interval-ms: 10000
+

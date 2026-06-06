@@ -3,8 +3,10 @@ package cache;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Data structure:
@@ -29,8 +31,10 @@ public class LRUCache {
     private final ReentrantReadWriteLock.WriteLock writeLock = rwLock.writeLock();
 
     private final CacheStats stats = new CacheStats();
+    private final ScheduledExecutorService sweeper;
 
-    public LRUCache(int cap, long defaultTtlMs){
+
+    public LRUCache(int cap, long defaultTtlMs, long ttlCheckIntervalMs){
         if(cap<=0)
             throw new IllegalArgumentException("Capacity must greater than 0");
 
@@ -44,6 +48,16 @@ public class LRUCache {
 
         head.next  = tail;
         tail.prev = head;
+
+        this.sweeper = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "lru-ttl-sweeper");
+            t.setDaemon(true);
+            return t;
+        });
+
+        if (defaultTtlMs > 0 && ttlCheckIntervalMs > 0) {
+            sweeper.scheduleAtFixedRate(this::sweepExpired, ttlCheckIntervalMs, ttlCheckIntervalMs, TimeUnit.MILLISECONDS);
+        }
     }
 
     /**
@@ -216,5 +230,28 @@ public class LRUCache {
         }finally {
             writeLock.unlock();
         }
+    }
+
+    private void sweepExpired() {
+        writeLock.lock();
+        try {
+            CacheNode current = tail.prev;
+            while (current != head) {
+                CacheNode prev = current.prev;
+                if (current.isExpired()) {
+                    removeNode(current);
+                    map.remove(current.key);
+                    size--;
+                    stats.recordExpiration();
+                }
+                current = prev;
+            }
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    public void shutdown() {
+        sweeper.shutdown();
     }
 }
